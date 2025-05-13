@@ -15,6 +15,8 @@ void basic1(char* s) {
         sigkill(pid, SIGUSR0, 0);
         int ret;
         wait(0, &ret);
+        // print ret
+        printf("ret = %d\n", ret);
         assert(ret == -10 - SIGUSR0);
     }
 }
