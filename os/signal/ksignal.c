@@ -124,6 +124,8 @@ int do_signal(void) {
                         k_ucontext.uc_mcontext.regs[28] = tf->t4;
                         k_ucontext.uc_mcontext.regs[29] = tf->t5;
                         k_ucontext.uc_mcontext.regs[30] = tf->t6;
+                        // save previous ucontext addr
+                        k_ucontext.last_ucontext = p->signal.ucontext_user_addr;
 
                         siginfo_t k_siginfo;
                         memset(&k_siginfo, 0, sizeof(k_siginfo));
@@ -214,6 +216,7 @@ int sys_sigaction(int signo, const sigaction_t __user *act, sigaction_t __user *
 }
 
 int sys_sigreturn() {
+    printf("sys_sigreturn: begin.\n");
     struct proc* p = curr_proc();
     struct trapframe* tf = p->trapframe;
 
@@ -237,10 +240,7 @@ int sys_sigreturn() {
     }
     release(&p->mm->lock);
 
-    p->signal.ucontext_user_addr = 0;
-    
-    // restore sigmask
-    p->signal.sigmask = k_ucontext.uc_sigmask;
+    p->signal.ucontext_user_addr = k_ucontext.last_ucontext;
 
     // restore trapframe
     tf->epc = k_ucontext.uc_mcontext.epc;
@@ -275,6 +275,11 @@ int sys_sigreturn() {
     tf->t4  = k_ucontext.uc_mcontext.regs[28];
     tf->t5  = k_ucontext.uc_mcontext.regs[29];
     tf->t6  = k_ucontext.uc_mcontext.regs[30];
+    // print restored epc
+    printf("sys_sigreturn: restored epc: %x.\n", tf->epc);
+    printf("sys_sigreturn: return.\n");
+    // restore sigmask
+    p->signal.sigmask = k_ucontext.uc_sigmask;
 
     return 0;
 }

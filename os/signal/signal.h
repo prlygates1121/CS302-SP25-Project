@@ -39,6 +39,7 @@ struct sigaction {
 
 struct ucontext {
     sigset_t uc_sigmask;
+    uint64 last_ucontext;
     struct mcontext {
         uint64 epc;
         uint64 regs[31];
