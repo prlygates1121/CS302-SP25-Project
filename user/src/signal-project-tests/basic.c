@@ -64,7 +64,9 @@ void basic3(char* s) {
             .sa_restorer  = sigreturn,
         };
         sigemptyset(&sa.sa_mask);
+        printf("?\n");
         sigaction(SIGUSR0, &sa, 0);
+        printf("Yes\n");
         while (1);
         exit(1);
     } else {

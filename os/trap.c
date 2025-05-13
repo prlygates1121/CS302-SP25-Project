@@ -173,13 +173,6 @@ void usertrap() {
     tracef("trap from user epc = %p", trapframe->epc);
     int killed;
 
-    if (p->pid == 5) {
-        // print its pending signals
-        printf("usertrap: pending signals for process %d: %x\n", p->pid, p->signal.sigpending);
-        printf("usertrap: cause for trap: %d.\n", r_scause());
-        printf("usertrap: a7 = %d.\n", trapframe->a7);
-    }
-
     uint64 cause = r_scause();
     if (cause & SCAUSE_INTERRUPT) {
         which_dev = handle_intr();

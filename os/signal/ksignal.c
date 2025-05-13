@@ -43,15 +43,10 @@ int siginit_exec(struct proc *p) {
 int do_signal(void) {
     assert(!intr_get());
     struct proc* p = curr_proc();
-    if (p->pid == 5) {
-        printf("pid 5: pending signals: %x.\n", p->signal.sigpending);
-    }
     for (int signo = SIGMIN; signo <= SIGMAX; signo++) {
         // from SIGMIN to SIGMAX, check if each signal is pending
         if (((p->signal.sigpending) & (1 << signo)) != 0) {
             printf("do_signal: signal %d is pending!\n", signo);
-            // clear pending bit of this signal
-            sigdelset(&p->signal.sigpending, signo);
             // for SIGKILL and SIGSTOP, we handle them directly without checking the mask/action
             if (signo == SIGKILL) {
                 setkilled(p, -10 - signo);
@@ -61,6 +56,8 @@ int do_signal(void) {
                 // check if the signal is masked
                 if ((p->signal.sigmask & (1 << signo)) == 0) {
                     printf("do_signal: signal %d is not masked!\n", signo);
+                    // clear pending bit of this signal
+                    sigdelset(&p->signal.sigpending, signo);
                     sigaction_t *sa = &(p->signal.sa[signo]);
                     if (sa->sa_sigaction == SIG_DFL) {
                         printf("do_signal: signal %d is default!\n", signo);
@@ -151,12 +148,17 @@ int do_signal(void) {
 
                         siginfo_user_addr = user_sp;
 
+                        acquire(&p->lock);
+                        acquire(&p->mm->lock);
+                        release(&p->lock);
                         if (copy_to_user(p->mm, ucontext_user_addr, (char*)(&k_ucontext), sizeof(k_ucontext)) < 0 ||
                             copy_to_user(p->mm, siginfo_user_addr, (char*)(&k_siginfo), sizeof(k_siginfo)) < 0) {
+                            release(&p->mm->lock);
                             printf("copyout to user stack failed for signal %d\n", signo);
                             setkilled(p, -1); 
                             break;
                         }
+                        release(&p->mm->lock);
 
                         // add sa->mask and current signal to sigmask
                         p->signal.sigmask |= sa->sa_mask;
@@ -190,13 +192,23 @@ int do_signal(void) {
 //  sys_* functions are called by syscall.c
 
 int sys_sigaction(int signo, const sigaction_t __user *act, sigaction_t __user *oldact) {
-    sigaction_t *curr_sigaction = &(curr_proc()->signal.sa[signo]);
+    // print function arguments
+    printf("sys_sigaction: signo = %d, act = %p, oldact = %p\n", signo, act, oldact);
+    struct proc* p = curr_proc();
     if (oldact != NULL) {
-        *oldact = *curr_sigaction;
+        *oldact = p->signal.sa[signo];
     }
+    sigaction_t k_sigaction;
+
+    acquire(&p->lock);
+    acquire(&p->mm->lock);
+    release(&p->lock);
+    copy_from_user(p->mm, (char*)(&k_sigaction), (uint64)act, sizeof(sigaction_t));
+    release(&p->mm->lock);
+
     // signal action for SIGKILL and SIGSTOP cannot be modified
     if (signo != SIGKILL && signo != SIGSTOP && act != NULL) {
-        *curr_sigaction = *act;
+        p->signal.sa[signo] = k_sigaction;
     }
     return 0;
 }
@@ -214,11 +226,16 @@ int sys_sigreturn() {
     }
 
     struct ucontext k_ucontext;
+    acquire(&p->lock);
+    acquire(&p->mm->lock);
+    release(&p->lock);
     if (copy_from_user(p->mm, (char*)(&k_ucontext), ucontext_user_addr, sizeof(k_ucontext)) < 0) {
+        release(&p->mm->lock);
         printf("copy from user stack failed.\n");
         setkilled(p, -1);
         return -1;
     }
+    release(&p->mm->lock);
 
     p->signal.ucontext_user_addr = 0;
     
