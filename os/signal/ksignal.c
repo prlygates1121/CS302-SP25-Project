@@ -194,8 +194,6 @@ int do_signal(void) {
 //  sys_* functions are called by syscall.c
 
 int sys_sigaction(int signo, const sigaction_t __user *act, sigaction_t __user *oldact) {
-    // print function arguments
-    printf("sys_sigaction: signo = %d, act = %p, oldact = %p\n", signo, act, oldact);
     struct proc* p = curr_proc();
     if (oldact != NULL) {
         *oldact = p->signal.sa[signo];
@@ -234,7 +232,7 @@ int sys_sigreturn() {
     release(&p->lock);
     if (copy_from_user(p->mm, (char*)(&k_ucontext), ucontext_user_addr, sizeof(k_ucontext)) < 0) {
         release(&p->mm->lock);
-        printf("copy from user stack failed.\n");
+        printf("sys_sigreturn: copy from user stack failed.\n");
         setkilled(p, -1);
         return -1;
     }
@@ -285,14 +283,29 @@ int sys_sigreturn() {
 }
 
 int sys_sigprocmask(int how, const sigset_t __user *set, sigset_t __user *oldset) {
-    sigset_t *curr_sigmask = &(curr_proc()->signal.sigmask);
+    struct proc* p = curr_proc();
+    sigset_t *curr_sigmask = &(p->signal.sigmask);
     if (oldset != NULL) {
         *oldset = *curr_sigmask;
     }
+
     if (set != NULL) {
+        sigset_t k_set;
+
+        acquire(&p->lock);
+        acquire(&p->mm->lock);
+        release(&p->lock);
+        if (copy_from_user(p->mm, (char*)(&k_set), (uint64)set, sizeof(sigset_t)) < 0) {
+            release(&p->mm->lock);
+            printf("sys_sigprocmask: copy from user failed.\n");
+            setkilled(p, -1);
+            return -1;
+        }
+        release(&p->mm->lock);
+
         // actual_set = set excluding SIGKILL and SIGSTOP
         // this ignores attempts to mask SIGKILL or SIGSTOP
-        sigset_t actual_set = *set & ~sigmask(SIGKILL) & ~sigmask(SIGSTOP);
+        sigset_t actual_set = k_set & ~sigmask(SIGKILL) & ~sigmask(SIGSTOP);
         switch (how) {
             case (SIG_BLOCK):
                 *curr_sigmask |= actual_set;
@@ -312,7 +325,19 @@ int sys_sigprocmask(int how, const sigset_t __user *set, sigset_t __user *oldset
 
 int sys_sigpending(sigset_t __user *set) {
     if (set != NULL) {
-        *set = curr_proc()->signal.sigpending;
+        struct proc* p = curr_proc();
+        sigset_t k_set = p->signal.sigpending;
+
+        acquire(&p->lock);
+        acquire(&p->mm->lock);
+        release(&p->lock);
+        if (copy_to_user(p->mm, (uint64)set, (char*)(&k_set), sizeof(sigset_t)) < 0) {
+            release(&p->mm->lock);
+            printf("sys_sigprocmask: copy from user failed.\n");
+            setkilled(p, -1);
+            return -1;
+        }
+        release(&p->mm->lock);
     }
     return 0;
 }
