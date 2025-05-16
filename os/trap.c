@@ -211,7 +211,7 @@ void usertrap() {
 
     // are we still alive? pending signals may kill us.
     if ((killed = iskilled(p)) != 0) {
-        printf("usertrap: signal killed process %d\n", p->pid);
+        // printf("usertrap: signal killed process %d\n", p->pid);
         exit(killed);
     }
 

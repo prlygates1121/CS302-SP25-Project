@@ -11,12 +11,14 @@
  * @return int 
  */
 int siginit(struct proc *p) {
+    assert(holding(&p->lock));
     // init p->signal
     memset(&p->signal, 0, sizeof(struct ksignal));
     return 0;
 }
 
 int siginit_fork(struct proc *parent, struct proc *child) {
+    assert(holding(&parent->lock));
     // copy parent's sigactions and signal mask
     // but clear all pending signals
     for (int signo = SIGMIN; signo <= SIGMAX; signo++) {
@@ -28,6 +30,7 @@ int siginit_fork(struct proc *parent, struct proc *child) {
 }
 
 int siginit_exec(struct proc *p) {
+    assert(holding(&p->lock));
     // inherit signal mask and pending signals.
     // but reset all sigactions (except ignored) to default.
     for (int signo = SIGMIN; signo <= SIGMAX; signo++) {
@@ -43,24 +46,27 @@ int siginit_exec(struct proc *p) {
 int do_signal(void) {
     assert(!intr_get());
     struct proc* p = curr_proc();
+    acquire(&p->lock);
     for (int signo = SIGMIN; signo <= SIGMAX; signo++) {
         // from SIGMIN to SIGMAX, check if each signal is pending
         if (((p->signal.sigpending) & (1 << signo)) != 0) {
-            printf("do_signal: signal %d is pending!\n", signo);
+            // printf("do_signal: signal %d is pending!\n", signo);
             // for SIGKILL and SIGSTOP, we handle them directly without checking the mask/action
             if (signo == SIGKILL) {
+                release(&p->lock);
                 setkilled(p, -10 - signo);
+                return 0;
             } else if (signo == SIGSTOP) {
                 
             } else {
                 // check if the signal is masked
                 if ((p->signal.sigmask & (1 << signo)) == 0) {
-                    printf("do_signal: signal %d is not masked!\n", signo);
+                    // printf("do_signal: signal %d is not masked!\n", signo);
                     // clear pending bit of this signal
                     sigdelset(&p->signal.sigpending, signo);
                     sigaction_t *sa = &(p->signal.sa[signo]);
                     if (sa->sa_sigaction == SIG_DFL) {
-                        printf("do_signal: signal %d is default!\n", signo);
+                        // printf("do_signal: signal %d is default!\n", signo);
                         // if action is set to default
                         switch (signo) {
                             case (SIGUSR0):
@@ -69,8 +75,9 @@ int do_signal(void) {
                             case (SIGTERM):
                             case (SIGSEGV):
                             case (SIGINT) :
+                                release(&p->lock);
                                 setkilled(p, -10 - signo);
-                                break;
+                                return 0;
                             case (SIGCONT):
                                 break;
                             case (SIGCHLD):
@@ -79,10 +86,10 @@ int do_signal(void) {
                         }
                     } else if (sa->sa_sigaction == SIG_IGN) {
                         // if action is set to ignore
-                        printf("do_signal: signal %d is ignored!\n", signo);
+                        // printf("do_signal: signal %d is ignored!\n", signo);
                     } else {
                         // if a handler is specified
-                        printf("do_signal: signal %d has a handler!\n", signo);
+                        // printf("do_signal: signal %d has a handler!\n", signo);
                         struct trapframe *tf = p->trapframe;
 
                         // ucontext created in kernel stack (temporarily)
@@ -150,12 +157,11 @@ int do_signal(void) {
 
                         siginfo_user_addr = user_sp;
 
-                        acquire(&p->lock);
                         acquire(&p->mm->lock);
-                        release(&p->lock);
                         if (copy_to_user(p->mm, ucontext_user_addr, (char*)(&k_ucontext), sizeof(k_ucontext)) < 0 ||
                             copy_to_user(p->mm, siginfo_user_addr, (char*)(&k_siginfo), sizeof(k_siginfo)) < 0) {
                             release(&p->mm->lock);
+                            release(&p->lock);
                             printf("copyout to user stack failed for signal %d\n", signo);
                             setkilled(p, -1); 
                             break;
@@ -180,6 +186,8 @@ int do_signal(void) {
                         // let handler return to sigreturn
                         tf->ra = (uint64)sa->sa_restorer;
                         
+                        release(&p->lock);
+
                         // do_signal --> usertrapret --> userret --> sret --> handler --> sigreturn --> user code
                         return 0;
                     }
@@ -187,6 +195,7 @@ int do_signal(void) {
             }
         }
     }
+    release(&p->lock);
     return 0;
 }
 
@@ -195,43 +204,63 @@ int do_signal(void) {
 
 int sys_sigaction(int signo, const sigaction_t __user *act, sigaction_t __user *oldact) {
     struct proc* p = curr_proc();
-    if (oldact != NULL) {
-        *oldact = p->signal.sa[signo];
-    }
     sigaction_t k_sigaction;
 
-    acquire(&p->lock);
-    acquire(&p->mm->lock);
-    release(&p->lock);
-    copy_from_user(p->mm, (char*)(&k_sigaction), (uint64)act, sizeof(sigaction_t));
-    release(&p->mm->lock);
-
-    // signal action for SIGKILL and SIGSTOP cannot be modified
-    if (signo != SIGKILL && signo != SIGSTOP && act != NULL) {
-        p->signal.sa[signo] = k_sigaction;
+    if (oldact != NULL) {
+        acquire(&p->lock);
+        k_sigaction = p->signal.sa[signo];
+        acquire(&p->mm->lock);
+        if (copy_to_user(p->mm, (uint64)oldact, (char*)(&k_sigaction), sizeof(k_sigaction)) < 0) {
+            release(&p->mm->lock);
+            release(&p->lock);
+            printf("sys_sigaction: copy to user *oldact failed.\n");
+            return -1;
+        }
+        release(&p->mm->lock);
+        release(&p->lock);
     }
+
+    if (act != NULL) {
+        acquire(&p->lock);
+        k_sigaction = p->signal.sa[signo];
+        acquire(&p->mm->lock);
+        if (copy_from_user(p->mm, (char*)(&k_sigaction), (uint64)act, sizeof(k_sigaction)) < 0) {
+            release(&p->mm->lock);
+            release(&p->lock);
+            printf("sys_sigaction: copy from user *act failed.\n");
+            return -1;
+        }
+        release(&p->mm->lock);
+        // signal action for SIGKILL and SIGSTOP cannot be modified
+        if (signo != SIGKILL && signo != SIGSTOP && act != NULL) {
+            p->signal.sa[signo] = k_sigaction;
+        }
+        release(&p->lock);
+    }
+
     return 0;
 }
 
 int sys_sigreturn() {
-    printf("sys_sigreturn: begin.\n");
+    // printf("sys_sigreturn: begin.\n");
     struct proc* p = curr_proc();
+    acquire(&p->lock);
     struct trapframe* tf = p->trapframe;
 
     uint64 ucontext_user_addr = p->signal.ucontext_user_addr;
 
     if (ucontext_user_addr == 0) {
         printf("sys_sigreturn: ucontext_user_addr is zero\n");
+        release(&p->lock);
         setkilled(p, -1);
         return -1;
     }
 
     struct ucontext k_ucontext;
-    acquire(&p->lock);
     acquire(&p->mm->lock);
-    release(&p->lock);
     if (copy_from_user(p->mm, (char*)(&k_ucontext), ucontext_user_addr, sizeof(k_ucontext)) < 0) {
         release(&p->mm->lock);
+        release(&p->lock);
         printf("sys_sigreturn: copy from user stack failed.\n");
         setkilled(p, -1);
         return -1;
@@ -273,28 +302,38 @@ int sys_sigreturn() {
     tf->t4  = k_ucontext.uc_mcontext.regs[28];
     tf->t5  = k_ucontext.uc_mcontext.regs[29];
     tf->t6  = k_ucontext.uc_mcontext.regs[30];
-    // print restored epc
-    printf("sys_sigreturn: restored epc: %x.\n", tf->epc);
-    printf("sys_sigreturn: return.\n");
+
+    // printf("sys_sigreturn: return.\n");
     // restore sigmask
     p->signal.sigmask = k_ucontext.uc_sigmask;
+    
+    release(&p->lock);
 
     return 0;
 }
 
 int sys_sigprocmask(int how, const sigset_t __user *set, sigset_t __user *oldset) {
     struct proc* p = curr_proc();
-    sigset_t *curr_sigmask = &(p->signal.sigmask);
+    sigset_t k_set;
+
     if (oldset != NULL) {
-        *oldset = *curr_sigmask;
+        acquire(&p->lock);
+        k_set = p->signal.sigmask;
+
+        acquire(&p->mm->lock);
+        if (copy_to_user(p->mm, (uint64)oldset, (char*)(&k_set), sizeof(k_set)) < 0) {
+            release(&p->mm->lock);
+            release(&p->lock);
+            printf("sys_sigaction: copy to user *oldact failed.\n");
+            return -1;
+        }
+        release(&p->mm->lock);
+        release(&p->lock);
     }
 
     if (set != NULL) {
-        sigset_t k_set;
-
         acquire(&p->lock);
         acquire(&p->mm->lock);
-        release(&p->lock);
         if (copy_from_user(p->mm, (char*)(&k_set), (uint64)set, sizeof(sigset_t)) < 0) {
             release(&p->mm->lock);
             printf("sys_sigprocmask: copy from user failed.\n");
@@ -302,23 +341,24 @@ int sys_sigprocmask(int how, const sigset_t __user *set, sigset_t __user *oldset
             return -1;
         }
         release(&p->mm->lock);
-
         // actual_set = set excluding SIGKILL and SIGSTOP
         // this ignores attempts to mask SIGKILL or SIGSTOP
         sigset_t actual_set = k_set & ~sigmask(SIGKILL) & ~sigmask(SIGSTOP);
         switch (how) {
             case (SIG_BLOCK):
-                *curr_sigmask |= actual_set;
+                p->signal.sigmask |= actual_set;
                 break;
             case (SIG_UNBLOCK):
-                *curr_sigmask &= ~(actual_set);
+                p->signal.sigmask &= ~(actual_set);
                 break;
             case (SIG_SETMASK):
-                *curr_sigmask = actual_set;
+                p->signal.sigmask = actual_set;
                 break;
             default:
+                release(&p->lock);
                 return -1;
         }
+        release(&p->lock);
     }
     return 0;
 }
@@ -326,11 +366,10 @@ int sys_sigprocmask(int how, const sigset_t __user *set, sigset_t __user *oldset
 int sys_sigpending(sigset_t __user *set) {
     if (set != NULL) {
         struct proc* p = curr_proc();
+        acquire(&p->lock);
         sigset_t k_set = p->signal.sigpending;
 
-        acquire(&p->lock);
         acquire(&p->mm->lock);
-        release(&p->lock);
         if (copy_to_user(p->mm, (uint64)set, (char*)(&k_set), sizeof(sigset_t)) < 0) {
             release(&p->mm->lock);
             printf("sys_sigprocmask: copy from user failed.\n");
@@ -338,32 +377,28 @@ int sys_sigpending(sigset_t __user *set) {
             return -1;
         }
         release(&p->mm->lock);
+        release(&p->lock);
     }
     return 0;
 }
 
 int sys_sigkill(int pid, int signo, int code) {
     struct proc *target_p = NULL;
-    int found = 0;
 
     for (int i = 0; i < NPROC; i++) {
-        if (pool[i] != NULL && pool[i]->state != UNUSED && pool[i]->pid == pid) {
-            target_p = pool[i];
-            found = 1;
-            printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
-            break;
+        target_p = pool[i];
+        acquire(&target_p->lock);
+        if (pool[i]->pid == pid) {
+            // printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
+            sigaddset(&target_p->signal.sigpending, signo);
+            target_p->signal.siginfos[signo].si_signo = signo;
+            target_p->signal.siginfos[signo].si_code = code;
+            release(&target_p->lock);
+            return 0;
         }
+        release(&target_p->lock);
     }
 
-    if (!found) {
-        printf("sys_sigkill: process with pid %d not found.\n");
-        return -1;
-    }
-
-    sigaddset(&target_p->signal.sigpending, signo);
-
-    target_p->signal.siginfos[signo].si_signo = signo;
-    target_p->signal.siginfos[signo].si_code = code;
-
-    return 0;
+    printf("sys_sigkill: process with pid %d not found.\n");
+    return -1;
 }
