@@ -199,6 +199,23 @@ void usertrap() {
     if ((killed = iskilled(p)) != 0)
         exit(killed);
 
+    if (which_dev == 0) {
+        struct proc *p = curr_proc();
+        // acquire(&p->lock);
+        // printf("alarm_pending:%d, alarm_remaining:%d", p->alarm_pending, p->alarm_remaining);
+        if (p->alarm_pending && p->alarm_remaining > 0) {
+            p->alarm_remaining--;
+            printf("Timer tick: remaining=%d\n", p->alarm_remaining);
+            if (p->alarm_remaining <= 0) {
+                printf("Triggering SIGALRM for pid=%d\n", p->pid);
+                sys_sigkill(p->pid, SIGALRM, 0, 1);
+                p->alarm_pending = 0;
+            }
+        }
+        // release(&p->lock);
+        // yield();
+    }
+
     // if it's a timer intr, call yield to give up CPU.
     if (which_dev == 1)
         yield();

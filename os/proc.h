@@ -69,6 +69,10 @@ struct proc {
 
     // Project signal:
     struct ksignal signal;
+
+    uint64 alarm_interval;
+    uint64 alarm_remaining;
+    int alarm_pending;
 };
 
 static inline int cpuid() {
