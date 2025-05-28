@@ -80,7 +80,7 @@ int do_signal(void) {
                                 return 0;
                             case (SIGCONT):
                                 break;
-                            case (SIGCHLD):
+                            case (SIGCHLD)://忽略
                             default:
                                 break;
                         }
