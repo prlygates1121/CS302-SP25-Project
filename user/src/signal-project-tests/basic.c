@@ -361,4 +361,27 @@ void basic20(char *s) {
         wait(0, &ret);
         assert(ret == 1); // child should not be terminated by SIGUSR0
     }
+
+    
+}
+
+void sigstop_sigcont(char* s) {
+    int pid = fork();
+    if (pid == 0) {
+        for (int i = 0; i < 5; i++) {
+            printf("child running %d\n", i);
+            sleep(20); 
+        }
+        exit(0); 
+    } else {
+        sleep(25); 
+        sigkill(pid, SIGSTOP, 0); 
+        sleep(60); 
+        sigkill(pid, SIGCONT, 0); 
+        sleep(100); 
+        int ret;
+        wait(0, &ret);
+
+        assert(ret == 0);
+    }
 }

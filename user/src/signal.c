@@ -1,7 +1,7 @@
 #include "../../os/ktest/ktest.h"
 #include "../lib/user.h"
 #include "signal-project-tests/basic.c"
-#include "signal-project-tests/stop_cont.c"
+//#include "signal-project-tests/stop_cont.c"
 // basic 1-3
 
 struct test {
@@ -19,7 +19,8 @@ struct test {
     {basic10, "basic10"},
     {basic11, "basic11"},
     {basic20, "basic20"},
-    {sigstop_sigcont,    "sigstop_sigcont"     },
+    {sigstop_sigcont,    "sigstop_sigcont"},
+    {NULL,NULL}
 };
 
 int run(void f(char *), char *s) {

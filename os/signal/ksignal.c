@@ -57,7 +57,11 @@ int do_signal(void) {
                 setkilled(p, -10 - signo);
                 return 0;
             } else if (signo == SIGSTOP) {
-                
+                p->stopped = 1;
+                release(&p->lock); 
+                sigdelset(&p->signal.sigpending, signo);
+                printf("SIGSTOP delivered to pid=%d, stopped=%d\n", p->pid, p->stopped);
+                return 0;
             } else {
                 // check if the signal is masked
                 if ((p->signal.sigmask & (1 << signo)) == 0) {
@@ -80,7 +84,8 @@ int do_signal(void) {
                                 return 0;
                             case (SIGCONT):
                                 p->stopped = 0;
-                                wakeup(&p->stopped);
+                                release(&p->lock);
+                                printf("SIGCONT delivered to pid=%d, stopped=%d\n", p->pid, p->stopped);
                                 return 0;
                             case (SIGALRM):
                                 break;
@@ -91,10 +96,7 @@ int do_signal(void) {
                     } else if (sa->sa_sigaction == SIG_IGN) {
                         // if action is set to ignore
                         // printf("do_signal: signal %d is ignored!\n", signo);
-                        p->stopped = 1;   
-                        while (p->stopped) {
-                            sleep(&p->stopped, &p->lock); 
-                        }
+                        
                     } else {
                         // if a handler is specified
                         // printf("do_signal: signal %d has a handler!\n", signo);
@@ -461,7 +463,12 @@ int sys_sigkill(int pid, int signo, int code, int from_kernel) {
     if (signo == SIGKILL) {
         setkilled(target_p, -10 - SIGKILL);
     }
-    
+    if (signo == SIGCONT) {
+        if (target_p->stopped) {
+            target_p->stopped = 0;
+            wakeup(&target_p->stopped);
+        }
+    }   
     release(&target_p->lock);
     return 0;
 }
