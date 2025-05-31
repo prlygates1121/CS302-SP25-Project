@@ -14,7 +14,8 @@ sub entry {
     print " ecall\n";
     print " ret\n";
 }
-	
+
+entry("alarm");
 entry("fork");
 entry("exec");
 entry("exit");

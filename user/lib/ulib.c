@@ -110,3 +110,4 @@ int atoi(const char *s) {
     while ('0' <= *s && *s <= '9') n = n * 10 + *s++ - '0';
     return n;
 }
+

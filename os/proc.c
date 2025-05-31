@@ -5,6 +5,7 @@
 #include "loader.h"
 #include "queue.h"
 #include "trap.h"
+#define WNOHANG 0x01
 
 struct proc *pool[NPROC];
 struct proc *init_proc = NULL;
@@ -324,6 +325,18 @@ void exit(int code) {
 
     int wakeinit = 0;
 
+    struct proc *original_parent = p->parent;
+    int should_send_signal = 0;
+    siginfo_t info;
+
+    if (original_parent && original_parent->state != ZOMBIE) {
+        should_send_signal = 1;
+        memset(&info, 0, sizeof(info));
+        info.si_signo = SIGCHLD;
+        info.si_pid = p->pid;
+        info.si_code = code;
+    }
+
     // reparent:
     for (int i = 0; i < NPROC; i++) {
         struct proc *child = pool[i];
@@ -340,6 +353,10 @@ void exit(int code) {
     if (wakeinit)
         wakeup(init_proc);
 
+    if (should_send_signal) {
+        sys_sigkill(original_parent->pid, SIGCHLD, info.si_code, 1);
+    }
+
     // wakeup wait-ing parent.
     //  There is no race because locking against "wait_lock"
     wakeup(p->parent);
@@ -348,6 +365,7 @@ void exit(int code) {
 
     p->exit_code = code;
     p->state     = ZOMBIE;
+    // release(&p->lock);
 
     release(&wait_lock);
 

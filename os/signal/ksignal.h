@@ -24,6 +24,6 @@ int sys_sigaction(int signo, const sigaction_t __user *act, sigaction_t __user *
 int sys_sigreturn();
 int sys_sigprocmask(int how, const sigset_t __user *set, sigset_t __user *oldset);
 int sys_sigpending(sigset_t __user *set);
-int sys_sigkill(int pid, int signo, int code);
+int sys_sigkill(int pid, int signo, int code, int from_kernel);
 
 #endif

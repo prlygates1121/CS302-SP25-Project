@@ -79,14 +79,22 @@ int do_signal(void) {
                                 setkilled(p, -10 - signo);
                                 return 0;
                             case (SIGCONT):
+                                p->stopped = 0;
+                                wakeup(&p->stopped);
+                                return 0;
+                            case (SIGALRM):
                                 break;
-                            case (SIGCHLD)://忽略
+                            case (SIGCHLD):
                             default:
                                 break;
                         }
                     } else if (sa->sa_sigaction == SIG_IGN) {
                         // if action is set to ignore
                         // printf("do_signal: signal %d is ignored!\n", signo);
+                        p->stopped = 1;   
+                        while (p->stopped) {
+                            sleep(&p->stopped, &p->lock); 
+                        }
                     } else {
                         // if a handler is specified
                         // printf("do_signal: signal %d has a handler!\n", signo);
@@ -137,6 +145,7 @@ int do_signal(void) {
                         siginfo_t k_siginfo;
                         memset(&k_siginfo, 0, sizeof(k_siginfo));
                         k_siginfo.si_signo = signo;
+                        k_siginfo.si_pid = p->signal.siginfos[signo].si_pid;
                         k_siginfo.si_code = p->signal.siginfos[signo].si_code;
 
                         uint64 user_sp = tf->sp;
@@ -145,7 +154,7 @@ int do_signal(void) {
                         // reserve space on stack for ucontext
                         user_sp -= sizeof(k_ucontext);
                         // align sp to 64 bits
-                        user_sp &= ~((uint64)7);
+                        user_sp &= ~((uint64)15);
                         
                         ucontext_user_addr = user_sp;
                         p->signal.ucontext_user_addr = ucontext_user_addr;
@@ -153,7 +162,7 @@ int do_signal(void) {
                         // reserve space on stack for siginfo
                         user_sp -= sizeof(siginfo_t);
                         // align sp to 64 bits
-                        user_sp &= ~((uint64)7);
+                        user_sp &= ~((uint64)15);
 
                         siginfo_user_addr = user_sp;
 
@@ -382,23 +391,77 @@ int sys_sigpending(sigset_t __user *set) {
     return 0;
 }
 
-int sys_sigkill(int pid, int signo, int code) {
+// int sys_sigkill(int pid, int signo, int code, int from_kernel) {
+//     struct proc *sender = curr_proc();
+//     struct proc *target_p = NULL;
+//     int found = 0;
+
+//     for (int i = 0; i < NPROC; i++) {
+//         target_p = pool[i];
+//         // acquire(&target_p->lock);
+//         if (pool[i]->pid == pid) {
+//             printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
+//             acquire(&target_p->lock);
+
+//             if (from_kernel) {
+//                 target_p->signal.siginfos[signo].si_pid = -1;
+//             } else {
+//                 target_p->signal.siginfos[signo].si_pid = sender->pid;
+//             }
+
+//             sigaddset(&target_p->signal.sigpending, signo);
+//             target_p->signal.siginfos[signo].si_signo = signo;
+//             target_p->signal.siginfos[signo].si_code = code;
+//             release(&target_p->lock);
+//             return 0;
+//         }
+//         // release(&target_p->lock);
+//     }
+
+//     printf("sys_sigkill: process with pid %d not found.\n");
+//     return -1;
+// }
+
+int sys_sigkill(int pid, int signo, int code, int from_kernel) {
+    struct proc *sender = curr_proc();
     struct proc *target_p = NULL;
+    int found = 0;
 
     for (int i = 0; i < NPROC; i++) {
         target_p = pool[i];
-        acquire(&target_p->lock);
-        if (pool[i]->pid == pid) {
-            // printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
-            sigaddset(&target_p->signal.sigpending, signo);
-            target_p->signal.siginfos[signo].si_signo = signo;
-            target_p->signal.siginfos[signo].si_code = code;
-            release(&target_p->lock);
-            return 0;
+        
+        if (target_p->state == UNUSED) 
+            continue;
+        
+        if (target_p->pid == pid) {
+            found = 1;
+            break;
         }
-        release(&target_p->lock);
     }
 
-    printf("sys_sigkill: process with pid %d not found.\n");
-    return -1;
+    if (!found) {
+        printf("sys_sigkill: process with pid %d not found.\n", pid);
+        return -1;
+    }
+
+    printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
+    acquire(&target_p->lock);
+
+    target_p->signal.siginfos[signo].si_signo = signo;
+    target_p->signal.siginfos[signo].si_code = code;
+    
+    if (from_kernel) {
+        target_p->signal.siginfos[signo].si_pid = -1;
+    } else {
+        target_p->signal.siginfos[signo].si_pid = sender->pid;
+    }
+
+    sigaddset(&target_p->signal.sigpending, signo);
+    
+    if (signo == SIGKILL) {
+        setkilled(target_p, -10 - SIGKILL);
+    }
+    
+    release(&target_p->lock);
+    return 0;
 }

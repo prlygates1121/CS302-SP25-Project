@@ -7,6 +7,8 @@
 #include "timer.h"
 #include "trap.h"
 
+extern uint64 sys_alarm(int sec);
+
 int64 sys_fork() {
     return fork();
 }
@@ -169,6 +171,39 @@ int64 sys_write(int fd, uint64 __user va, uint len) {
     return user_console_write(va, len);
 }
 
+// int argint(int n, int *ip) {
+//     struct proc *p = curr_proc();
+//     *ip = p->trapframe->a0 + n * sizeof(uint64);
+//     return 0;
+// }
+
+uint64 sys_alarm(int sec) {
+    int seconds = sec;
+    struct proc *p = curr_proc();
+    printf("%d", seconds);
+
+    if (seconds < 0) {
+        return -1;
+    }
+
+    acquire(&p->lock);
+
+    uint64 old_remaining = p->alarm_remaining;
+
+    if (seconds == 0) {
+        p->alarm_interval = 0;
+        p->alarm_remaining = 0;
+        p->alarm_pending = 0;
+    } else {
+        p->alarm_interval = seconds * 100;
+        p->alarm_remaining = p->alarm_interval;
+        p->alarm_pending = 1;
+    }
+
+    release(&p->lock);
+    return (uint64)(old_remaining/100);
+}
+
 void syscall() {
     struct trapframe *trapframe = curr_proc()->trapframe;
     int id                      = trapframe->a7;
@@ -219,7 +254,7 @@ void syscall() {
             ret = ktest_syscall(args);
             break;
         case SYS_sigkill:
-            ret = sys_sigkill(args[0], args[1], args[2]);
+            ret = sys_sigkill(args[0], args[1], args[2], 0);
             break;
         case SYS_sigaction:
             ret = sys_sigaction(args[0], (sigaction_t *)args[1], (sigaction_t *)args[2]);
@@ -232,6 +267,9 @@ void syscall() {
             break;
         case SYS_sigpending:
             ret = sys_sigpending((sigset_t *)args[0]);
+            break;
+        case SYS_alarm:
+            ret = sys_alarm(args[0]);
             break;
         default:
             ret = -1;

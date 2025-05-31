@@ -56,6 +56,7 @@ struct proc {
     int exit_code;
     void *sleep_chan;
     int killed;
+    int stopped;
 
     struct proc *parent;  // Parent process
 
@@ -69,6 +70,10 @@ struct proc {
 
     // Project signal:
     struct ksignal signal;
+
+    uint64 alarm_interval;
+    uint64 alarm_remaining;
+    int alarm_pending;
 };
 
 static inline int cpuid() {

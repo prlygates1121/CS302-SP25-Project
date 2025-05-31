@@ -19,6 +19,7 @@
 #define SYS_write 23
 
 #define SYS_gettimeofday 24
+#define SYS_alarm  25
 #define SYS_ktest 99
 
 #define SYS_sigaction 30
