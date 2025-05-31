@@ -85,7 +85,6 @@ int do_signal(void) {
                             case (SIGCONT):
                                 p->stopped = 0;
                                 release(&p->lock);
-                                printf("SIGCONT delivered to pid=%d, stopped=%d\n", p->pid, p->stopped);
                                 return 0;
                             case (SIGALRM):
                                 break;
@@ -446,7 +445,7 @@ int sys_sigkill(int pid, int signo, int code, int from_kernel) {
         return -1;
     }
 
-    printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
+    //printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
     acquire(&target_p->lock);
 
     target_p->signal.siginfos[signo].si_signo = signo;
@@ -459,16 +458,14 @@ int sys_sigkill(int pid, int signo, int code, int from_kernel) {
     }
 
     sigaddset(&target_p->signal.sigpending, signo);
-    
-    if (signo == SIGKILL) {
-        setkilled(target_p, -10 - SIGKILL);
-    }
+
+    release(&target_p->lock);
     if (signo == SIGCONT) {
+        printf("SIGCONT delivered to pid=%d, stopped=%d\n", target_p->pid, target_p->stopped);
         if (target_p->stopped) {
             target_p->stopped = 0;
             wakeup(&target_p->stopped);
         }
-    }   
-    release(&target_p->lock);
+    }  
     return 0;
 }
