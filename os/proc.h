@@ -50,12 +50,14 @@ extern struct proc *pool[];
 // Per-process state
 struct proc {
     spinlock_t lock;
+    spinlock_t sleep_lock;
     // p->lock must be held when accessing to these fields:
     enum procstate state;  // Process state
     int pid;               // Process ID
     int exit_code;
     void *sleep_chan;
     int killed;
+    int stopped;
 
     struct proc *parent;  // Parent process
 

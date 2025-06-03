@@ -242,7 +242,16 @@ void usertrapret() {
     if (intr_get())
         panic("usertrapret entered with intr on");
 
-    struct trapframe *trapframe = curr_proc()->trapframe;
+    struct proc *p = curr_proc();                   
+    struct trapframe *trapframe = p->trapframe;
+
+    acquire(&p->sleep_lock);
+    while (p->stopped) {
+        printf("usertrapret:stopped=%d\n",p->stopped);
+        sleep(&p->stopped, &p->sleep_lock); 
+    }
+    release(&p->sleep_lock);
+
 
     // set up trapframe values that uservec will need when
     // the process next traps into the kernel.

@@ -33,6 +33,7 @@ unsigned int alarm(unsigned int seconds);
 // assert
 #define _STRINGIFY(s) #s
 #define STRINGIFY(s)  _STRINGIFY(s)
+#define WNOHANG 0x01
 
 #define panic(fmt, ...)                                                                                                    \
     do {                                                                                                                   \

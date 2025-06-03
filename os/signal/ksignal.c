@@ -57,7 +57,11 @@ int do_signal(void) {
                 setkilled(p, -10 - signo);
                 return 0;
             } else if (signo == SIGSTOP) {
-                
+                p->stopped = 1;
+                release(&p->lock); 
+                sigdelset(&p->signal.sigpending, signo);
+                printf("SIGSTOP delivered to pid=%d, stopped=%d\n", p->pid, p->stopped);
+                return 0;
             } else {
                 // check if the signal is masked
                 if ((p->signal.sigmask & (1 << signo)) == 0) {
@@ -79,6 +83,9 @@ int do_signal(void) {
                                 setkilled(p, -10 - signo);
                                 return 0;
                             case (SIGCONT):
+                                p->stopped = 0;
+                                release(&p->lock);
+                                return 0;
                             case (SIGALRM):
                                 break;
                             case (SIGCHLD):
@@ -88,6 +95,7 @@ int do_signal(void) {
                     } else if (sa->sa_sigaction == SIG_IGN) {
                         // if action is set to ignore
                         // printf("do_signal: signal %d is ignored!\n", signo);
+                        
                     } else {
                         // if a handler is specified
                         // printf("do_signal: signal %d has a handler!\n", signo);
@@ -384,32 +392,80 @@ int sys_sigpending(sigset_t __user *set) {
     return 0;
 }
 
+// int sys_sigkill(int pid, int signo, int code, int from_kernel) {
+//     struct proc *sender = curr_proc();
+//     struct proc *target_p = NULL;
+//     int found = 0;
+
+//     for (int i = 0; i < NPROC; i++) {
+//         target_p = pool[i];
+//         // acquire(&target_p->lock);
+//         if (pool[i]->pid == pid) {
+//             printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
+//             acquire(&target_p->lock);
+
+//             if (from_kernel) {
+//                 target_p->signal.siginfos[signo].si_pid = -1;
+//             } else {
+//                 target_p->signal.siginfos[signo].si_pid = sender->pid;
+//             }
+
+//             sigaddset(&target_p->signal.sigpending, signo);
+//             target_p->signal.siginfos[signo].si_signo = signo;
+//             target_p->signal.siginfos[signo].si_code = code;
+//             release(&target_p->lock);
+//             return 0;
+//         }
+//         // release(&target_p->lock);
+//     }
+
+//     printf("sys_sigkill: process with pid %d not found.\n");
+//     return -1;
+// }
+
 int sys_sigkill(int pid, int signo, int code, int from_kernel) {
     struct proc *sender = curr_proc();
     struct proc *target_p = NULL;
+    int found = 0;
 
     for (int i = 0; i < NPROC; i++) {
         target_p = pool[i];
-        // acquire(&target_p->lock);
-        if (pool[i]->pid == pid) {
-            printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
-            acquire(&target_p->lock);
-
-            if (from_kernel) {
-                target_p->signal.siginfos[signo].si_pid = -1;
-            } else {
-                target_p->signal.siginfos[signo].si_pid = sender->pid;
-            }
-
-            sigaddset(&target_p->signal.sigpending, signo);
-            target_p->signal.siginfos[signo].si_signo = signo;
-            target_p->signal.siginfos[signo].si_code = code;
-            release(&target_p->lock);
-            return 0;
+        
+        if (target_p->state == UNUSED) 
+            continue;
+        
+        if (target_p->pid == pid) {
+            found = 1;
+            break;
         }
-        // release(&target_p->lock);
     }
 
-    printf("sys_sigkill: process with pid %d not found.\n");
-    return -1;
+    if (!found) {
+        printf("sys_sigkill: process with pid %d not found.\n", pid);
+        return -1;
+    }
+
+    //printf("sys_sigkill: send signal %d to process %d.\n", signo, pid);
+    acquire(&target_p->lock);
+
+    target_p->signal.siginfos[signo].si_signo = signo;
+    target_p->signal.siginfos[signo].si_code = code;
+    
+    if (from_kernel) {
+        target_p->signal.siginfos[signo].si_pid = -1;
+    } else {
+        target_p->signal.siginfos[signo].si_pid = sender->pid;
+    }
+
+    sigaddset(&target_p->signal.sigpending, signo);
+
+    release(&target_p->lock);
+    if (signo == SIGCONT) {
+        printf("SIGCONT delivered to pid=%d, stopped=%d\n", target_p->pid, target_p->stopped);
+        if (target_p->stopped) {
+            target_p->stopped = 0;
+            wakeup(&target_p->stopped);
+        }
+    }  
+    return 0;
 }
