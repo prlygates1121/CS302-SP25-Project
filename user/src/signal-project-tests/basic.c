@@ -380,8 +380,8 @@ void sigstop_sigcont(char* s) {
         sigkill(pid, SIGCONT, 0); 
         sleep(100); 
         int ret;
+        sigkill(pid, SIGKILL, 0);
         wait(0, &ret);
-
         assert(ret == 0);
     }
 }
